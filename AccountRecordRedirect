@@ -1,0 +1,149 @@
+------------------- accountList.html------------------------
+<template>
+    <lightning-card title="Yearly Accounts">
+        <div class="slds-m-around_medium">
+            <lightning-combobox name="year" label="Select Year" value={selectedYear}
+                                options={yearOptions} onchange={handleYearChange}>
+            </lightning-combobox>
+        </div>
+        <template if:true={accounts}>
+            <div class="slds-scrollable_y slds-scrollable_x" style="height:30rem;width:auto;overflow-y: scroll">
+            <lightning-accordion allow-multiple-sections-open>
+                <template for:each={accounts} for:item="account">
+                    <lightning-accordion-section key={account.Id} name={account.Id} label={account.Name} >
+                        <lightning-icon onclick={handleUserClick} size="x-small"  class="iconenablepointerevetns slds-icon slds-input__icon slds-input__icon_right slds-icon-text-default" icon-name="utility:chevronright"></lightning-icon>
+                        <dl class="slds-dl_horizontal">
+                            <dt class="slds-dl_horizontal__label">
+                                <p class="slds-truncate" title="Contact Count">Contact Count</p>
+                            </dt>
+                            <dd class="slds-dl_horizontal__detail slds-tile__meta">
+                                <p class="slds-truncate" title={account.Number_Of_Contacts__c}>{account.Number_Of_Contacts__c}</p>
+                            </dd>
+                            <dt class="slds-dl_horizontal__label">
+                                <p class="slds-truncate" title="Annual Revenue">Annual Revenue:</p>
+                            </dt>
+                            <dd class="slds-dl_horizontal__detail slds-tile__meta">
+                                <p class="slds-truncate" title={account.AnnualRevenue}>{account.AnnualRevenue}</p>
+                            </dd>
+                        </dl>
+
+                    </lightning-accordion-section>
+                </template>
+            </lightning-accordion>
+        </div>
+        </template>
+    </lightning-card>
+</template>
+
+------------------- accountList.js------------------------
+
+import { LightningElement, track, wire } from 'lwc';
+import { NavigationMixin } from 'lightning/navigation';
+import getUserRecordId from '@salesforce/apex/AccountController.getUserRecordId';
+import getYearlyAccounts from '@salesforce/apex/AccountController.getYearlyAccounts';
+
+export default class YearlyAccounts extends NavigationMixin(LightningElement) {
+    @track selectedYear = '2023';
+    @track accounts;
+    @track userRecordId;
+    @track userRecordUrl;
+
+    yearOptions = [...Array(11)].map((_, i) => ({ label: `${2013 + i}`, value: `${2013 + i}` }));
+
+    connectedCallback() {
+        getUserRecordId().then(result => {
+            this.userRecordId = result;
+            console.log('getUserRecordId result ' + result);
+        }).catch(error => {
+            console.error(error);
+        });
+    }
+
+    @wire(getYearlyAccounts, { year: '$selectedYear' })
+    wiredAccounts({ error, data }) {
+        if (data) {
+            this.accounts = data;
+            this.error = undefined;
+        } else if (error) {
+            this.error = error;
+            this.accounts = undefined;
+        }
+    }
+
+    handleYearChange(event) {
+        this.selectedYear = event.target.value;
+    }
+
+    handleAccountClick(event) {
+        const accountId = event.target.dataset.recordId;
+        this[NavigationMixin.Navigate]({
+            type: 'standard__recordPage',
+            attributes: {
+                objectApiName: 'Account',
+                recordId: accountId,
+                actionName: 'view'
+            }
+        });
+    }
+
+    handleUserClick(event) {
+        const recordId = event.target.closest('lightning-accordion-section').name;
+        this[NavigationMixin.Navigate]({
+            type: 'standard__recordPage',
+            attributes: {
+                objectApiName: 'Account',
+                recordId: recordId,
+                actionName: 'view',
+            },
+        });
+    }
+}
+
+-----------------accountListcontroller.cls----------------------
+public with sharing class AccountController {
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getYearlyAccounts(String year) {
+        Integer selectedYear = Integer.valueOf(year);
+        Date startDate = Date.newInstance(selectedYear, 1, 1);
+        Date endDate = Date.newInstance(selectedYear, 12, 31);
+    
+        // Map to store the Contact counts for each Account
+        Map<Id, Integer> accountContactCount = new Map<Id, Integer>();
+    
+        // Query for the Contacts related to the Accounts within the specified date range
+        List<Contact> contacts = [
+            SELECT Id, AccountId 
+            FROM Contact 
+            WHERE Account.CreatedDate >= :startDate AND Account.CreatedDate <= :endDate 
+        ];
+    
+        // Loop through the Contacts and increment the counts for each Account
+        for (Contact con : contacts) {
+            if (accountContactCount.containsKey(con.AccountId)) {
+                accountContactCount.put(con.AccountId, accountContactCount.get(con.AccountId) + 1);
+            } else {
+                accountContactCount.put(con.AccountId, 1);
+            }
+        }
+    
+        // Retrieve Accounts with the Contact counts
+        List<Account> accounts = [
+            SELECT Id, Name, AnnualRevenue, Number_Of_Contacts__c 
+            FROM Account 
+            WHERE CreatedDate >= :startDate AND CreatedDate <= :endDate Limit 4999 
+        ];
+    
+        // Set the Contact counts for each Account
+        for (Account acc : accounts) {
+            acc.Number_Of_Contacts__c = accountContactCount.get(acc.Id) != null ? accountContactCount.get(acc.Id) : 0;
+        }
+    
+        return accounts;
+    }
+    @AuraEnabled(cacheable=true)
+    public static String getUserRecordId() {
+        User user = [SELECT Id FROM User WHERE Username = :UserInfo.getUserName()];
+        return user.Id;
+    }
+
+}   
